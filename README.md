@@ -100,5 +100,8 @@ sudo ./main
   - [ ] Write my own eBPF like functions
       - [ ] Drop packets
       - [ ] Verify packets
+        
+- [ ] Packets from iOS or MacOS could not be capture.
+    - [ ] Understand network stack of Apple Products
 
 
