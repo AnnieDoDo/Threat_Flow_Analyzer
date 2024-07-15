@@ -82,14 +82,15 @@ sudo ./main
     - [X] IPv6
     - [X] ARP
     - [x] IPv6 over IPv4
-    - [ ] ICMP
+    - [X] ICMP
   - [ ] L4
-    - [ ] UDP
+    - [X] UDP
     - [ ] TCP
   - [ ] L7
     - [ ] SSH
     - [ ] HTTP
     - [ ] HTTPs
+    - [ ] DNS
      
 - [ ] How to store the IP information
   - [ ] database or file
