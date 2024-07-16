@@ -51,7 +51,7 @@ sudo tcpdump -i eth0 -dd 'tcp and not (port 22 or dst host 127.0.0.1 or dst host
     allows a network device to intercept and read each network packet that arrives in its entirety
 Open:
 ```
-sudo ifconfig eth0 -promisc
+sudo ifconfig eth0 promisc
 ```
 
 Check:
