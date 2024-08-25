@@ -1,27 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/epoll.h>
-#include <arpa/inet.h>
 #include <sys/socket.h>
-#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/ip.h>
-#include <errno.h>
 #include <fcntl.h>
-#include <stdint.h>
 
-#define MAX_EVENTS 10
-#define TIMEOUT 5000 // 5s
-
-// ICMP header
-struct icmp_header {
-    uint8_t type;         // ICMP message type
-    uint8_t code;         // Subtype code for ICMP message type
-    uint16_t checksum;    // Checksum for ICMP message
-    uint32_t rest_of_header;  // Additional data depending on type/code
-};
+#include "protocol_header.h"
 
 // Compute checksum (RFC 1071)
 unsigned short calculate_checksum(void *b, int len) {
@@ -40,153 +28,109 @@ unsigned short calculate_checksum(void *b, int len) {
 }
 
 // Create ICMP echo request
-void create_icmp_echo_request(struct icmp_header *icmp) {
+void create_icmp_echo_request(struct icmp_header *icmp, uint16_t identifier) {
     icmp->type = ICMP_ECHO;
     icmp->code = 0;
-    icmp->rest_of_header = htons((getpid() & 0xFFFF) << 16); // Using PID as the identifier
+    icmp->identifier = identifier;  // Set unique identifier
+    icmp->sequence = 0;
     icmp->checksum = 0x00;
     icmp->checksum = calculate_checksum((unsigned short *)icmp, sizeof(struct icmp_header));
 }
 
 // Send ICMP echo request
-int send_icmp_request(int sockfd, struct sockaddr_in *addr) {
+int send_icmp_request(int sockfd, struct sockaddr_in *addr, uint16_t identifier) {
     struct icmp_header icmp;
-    // char ip_str[INET_ADDRSTRLEN];
-    // inet_ntop(AF_INET, &(addr->sin_addr), ip_str, INET_ADDRSTRLEN);
-    // printf("IP Address: %s\n", ip_str);
-    create_icmp_echo_request(&icmp);
+    create_icmp_echo_request(&icmp, identifier);
     return sendto(sockfd, &icmp, sizeof(icmp), 0, (struct sockaddr *)addr, sizeof(*addr));
 }
 
 // Receive ICMP echo reply
 int receive_icmp_reply(int sockfd, char *buffer, int size) {
-    struct sockaddr_in addr;
-    socklen_t addr_len = sizeof(addr);
-    int bytes_received = recvfrom(sockfd, buffer, size, 0, (struct sockaddr *)&addr, &addr_len);
+    fd_set read_fds;
+    struct timeval timeout;
+    FD_ZERO(&read_fds); // Initialize the read_fds
+    FD_SET(sockfd, &read_fds);
 
-    if (bytes_received > 0) {
-        struct iphdr *ip = (struct iphdr *)buffer;
-        struct icmp_header *icmp = (struct icmp_header *)(buffer + (ip->ihl * 4));
-        
-        char ip_str[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &(addr.sin_addr), ip_str, INET_ADDRSTRLEN);
+    // Set timeout for select
+    timeout.tv_sec = 0;  // Timeout in seconds
+    timeout.tv_usec = 10000;           // Timeout in microseconds
 
-        if (icmp->type == ICMP_ECHOREPLY) {
-            return 1;
-        }
-    }
-    return 0;
-}
+    int result = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
 
-// Scan a single IP address
-int scan_ip(char *ip) {
-    int sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-    if (sockfd < 0) {
-        perror("socket");
-        return -1;
+    if (result == -1) {
+        perror("select");
+        return -1; // Error occurred
+    } else if (result == 0) {
+        // printf("Receive timeout occurred\n");
+        return 0; // Timeout occurred
     }
 
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    inet_pton(AF_INET, ip, &addr.sin_addr);
+    // Data is available
+    if (FD_ISSET(sockfd, &read_fds)) {
+        struct sockaddr_in addr;
+        socklen_t addr_len = sizeof(addr);
+        memset(&addr, 0, sizeof(addr));
 
-    int epoll_fd, nfds;
-    struct epoll_event event, events[MAX_EVENTS];
+        int bytes_received = recvfrom(sockfd, buffer, size, 0, (struct sockaddr *)&addr, &addr_len);
 
-    // Create an epoll instance with EPOLL_CLOEXEC flag
-    epoll_fd = epoll_create1(EPOLL_CLOEXEC);
-    if (epoll_fd == -1) {
-        perror("epoll_create1");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
+        if (bytes_received > 0) {
+            struct iphdr *ip = (struct iphdr *)buffer;
+            struct icmp_header *icmp = (struct icmp_header *)(buffer + (ip->ihl * 4));
+            char ip_str[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &(addr.sin_addr), ip_str, INET_ADDRSTRLEN);
 
-    // Add the raw socket to the epoll instance
-    event.events = EPOLLIN;  // Interested in read events
-    event.data.fd = sockfd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sockfd, &event) == -1) {
-        perror("epoll_ctl");
-        close(epoll_fd);
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-
-    if (send_icmp_request(sockfd, &addr) < 0) {
-        perror("sendto");
-        close(epoll_fd);
-        close(sockfd);
-        return -1;
-    }
-
-    char buffer[1024];
-    while (1) {
-        // Wait for events
-        nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, TIMEOUT);
-        if (nfds < 1) {
-            close(epoll_fd);
-            close(sockfd);
-            return -1;
-        }
-
-        // Handle events
-        for (int i = 0; i < nfds; ++i) {
-            if (events[i].events & EPOLLIN) {
-                if (receive_icmp_reply(sockfd, buffer, sizeof(buffer)) > 0) {
-                    close(epoll_fd);
-                    close(sockfd);
-                    return 1;
-                } else {
-                    close(epoll_fd);
-                    close(sockfd);
-                    return 0;
-                }
+            if (icmp->type == ICMP_ECHOREPLY && icmp->identifier != 0) {
+                printf("IP %s is up\n", ip_str);
+                return 1; // Reply received
             }
         }
     }
+    return 0; // No reply or error
 }
 
-// void *scan_range(void *args) {
-//     int ip_num = *(int *)args;
-
-//     char ip[16];
-//     snprintf(ip, sizeof(ip), "192.168.120.%d", ip_num);
-    
-//     if (scan_ip(ip) == 1) {
-//         printf("Host %s is up\n", ip);
-//     }
-
-//     free(args);
-//     return NULL;
-// }
-
 int main() {
-    char ip[16];
+    int sockfd;
+    struct sockaddr_in addr;
+    char buffer[1024];
+    char ip_str[INET_ADDRSTRLEN];
+    uint16_t identifier = 0;  // Arbitrary identifier for this request
 
-    for (int i = 87; i < 92; i++) {
-        snprintf(ip, sizeof(ip), "192.168.120.%d", i);
-        printf("Scanning %s: ", ip);
-        if (scan_ip(ip) == 1) {
-            printf("Host is up\n");
-        } else {
-            printf("No response\n");
-        }
+    // Create a raw socket for ICMP
+    sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (sockfd < 0) {
+        perror("socket");
+        exit(EXIT_FAILURE);
     }
 
-    // int range_size = 253; // Adjust range size to match number of threads
-    // pthread_t threads[range_size];
+    printf("Raw socket is scanning for ICMPv4.\n\n");
 
-    // for (int i = 2; i <= range_size; i++) {
-    //     int *ip_num = malloc(sizeof(int));
-    //     *ip_num = i;
-    //     if (pthread_create(&threads[i-2], NULL, scan_range, ip_num) != 0) {
-    //         perror("pthread_create");
-    //         free(ip_num);
-    //         return 1;
-    //     }
-    // }
+    // Send ICMP Echo Requests to each IP address in the range 192.168.120.1 to 192.168.120.255
+    for (int i = 1; i < 255; i++) {
+        // Set up the target address
+        addr.sin_family = AF_INET;
+        char target_ip[INET_ADDRSTRLEN];
+        snprintf(target_ip, sizeof(target_ip), "192.168.120.%d", i);
+        inet_pton(AF_INET, target_ip, &addr.sin_addr);
+        identifier = i;
 
-    // for (int i = 0; i < range_size; i++) {
-    //     pthread_join(threads[i], NULL);
-    // }
+        if (send_icmp_request(sockfd, &addr, identifier) < 0) {
+            perror("sendto");
+            close(sockfd);
+            exit(EXIT_FAILURE);
+        }
+
+    }
+
+    // Receive ICMP Echo Replies
+    for (int i = 1; i < 255; i++) {
+        // Set up the target address
+        addr.sin_family = AF_INET;
+        char target_ip[INET_ADDRSTRLEN];
+        snprintf(target_ip, sizeof(target_ip), "192.168.120.%d", i);
+        inet_pton(AF_INET, target_ip, &addr.sin_addr);
+        receive_icmp_reply(sockfd, buffer, sizeof(buffer));
+    }
+
+    close(sockfd);
     return 0;
 }

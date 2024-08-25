@@ -62,3 +62,12 @@ struct ipv6_over_ipv4_header {
     // IPv6 Header follows
     //uint32_t ipv6_header;    // IPv6 Header (can be directly embedded if known size)
 };
+
+// ICMP header
+struct icmp_header {
+    uint8_t type;         // ICMP message type
+    uint8_t code;         // Subtype code for ICMP message type
+    uint16_t checksum;    // Checksum for ICMP message
+    uint16_t identifier;  // Unique identifier
+    uint16_t sequence;
+};
