@@ -1,10 +1,13 @@
-# BPF Topology Detector
-
+# Threat_Flow_Analyzer
 ## About The Project 
-This project is to detect network topology by BPF. <br>
-The detector would cover from L2 to L7 with different protocols. <br>
+This project is a high-performance network topology detection and security monitoring tool. <br>
+It utilizes BPF for efficient packet filtering and C for low-level processing, ensuring minimal overhead. <br>
+The collected data is then transmitted to a Golang backend, which handles real-time event processing and integrates with Elasticsearch and Redis for storage and retrieval. <br>
 
-For example: Ethernet, IP, UDP, TCP, SSH, HTTP, HTTPs, ... and so on
+For advanced analysis, the system leverages Python for visualization and anomaly detection, enabling deep insights into network traffic patterns. <br>
+By integrating with a custom SIEM tool, this project provides a comprehensive security monitoring solution that spans Layer 2 to Layer 7 protocols, including Ethernet, IP, TCP, UDP, SSH, HTTP, and more. <br>
+
+For example: Ethernet, IP, UDP, TCP, SSH, HTTP, HTTPs, ... and so on <br>
 
 ## Built With
 
